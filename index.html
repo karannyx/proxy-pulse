@@ -27,8 +27,8 @@
       </div>
     </div>
 
-    <div class="flex items-center gap-2">
-      <input id="enrollment-input" type="text" placeholder="Enter Roll No (e.g. BTCS26O1062)" 
+    <div class="flex flex-wrap items-center gap-2">
+      <input id="enrollment-input" type="text" placeholder="Roll No (e.g. BTCS26O1062)" 
         class="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 uppercase" />
       <button onclick="loadStudentData()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
         Load Data
@@ -36,8 +36,31 @@
       <button onclick="triggerExtensionSync()" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-medium px-3 py-2 rounded-lg border border-zinc-700 transition">
         Sync AMS ↻
       </button>
+      <button onclick="toggleModal(true)" class="bg-sky-600/20 hover:bg-sky-600/30 text-sky-400 border border-sky-500/40 text-sm font-medium px-3 py-2 rounded-lg transition">
+        Get Extension
+      </button>
     </div>
   </header>
+
+  <!-- Setup Modal for Batchmates -->
+  <div id="setup-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+    <div class="glass max-w-md w-full rounded-2xl p-6 space-y-4 relative">
+      <button onclick="toggleModal(false)" class="absolute top-4 right-4 text-zinc-400 hover:text-white text-lg">✕</button>
+      <h3 class="text-lg font-bold text-white">Sync Your MITS AMS in 30 Seconds</h3>
+      <p class="text-xs text-zinc-400">One-time Chrome setup to sync your live attendance directly from <code class="text-emerald-400">ams.mitsgwalior.in</code>.</p>
+      
+      <ol class="text-sm text-zinc-300 space-y-2.5 list-decimal list-inside bg-zinc-900/90 p-4 rounded-xl border border-zinc-800">
+        <li>Download and extract <strong class="text-white">proxypulse-extension.zip</strong>.</li>
+        <li>Open <code class="text-sky-400">chrome://extensions</code> and turn ON <strong class="text-white">Developer mode</strong> (top-right).</li>
+        <li>Click <strong class="text-white">Load unpacked</strong> and select the extracted folder.</li>
+        <li>Open <a href="https://ams.mitsgwalior.in" target="_blank" class="text-emerald-400 underline">ams.mitsgwalior.in</a> & refresh once—then enter your Roll No here!</li>
+      </ol>
+
+      <a href="./proxypulse-extension.zip" download class="block w-full text-center bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg transition">
+        ⬇ Download Extension (.ZIP)
+      </a>
+    </div>
+  </div>
 
   <!-- Main Dashboard -->
   <main id="dashboard" class="max-w-6xl mx-auto mt-6 hidden space-y-6">
@@ -153,7 +176,7 @@
 
   <script>
     const SUPABASE_URL = "https://isybjtdokjltlkyuinru.supabase.co";
-    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzeWJqdGRva2psdGxreXVpbnJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUyOTQyMzIsImV4cCI6MjExMDg3MDIzMn0.f7yukspxleLmYvMebutdiMzt2yLTKLug2_7zbBAvhQw";
+    const SUPABASE_KEY = "YAHAN_APNI_SB_PUBLISHABLE_KEY_PASTE_KAREIN";
 
     let currentStudent = null;
     let currentCourses = [];
@@ -165,6 +188,12 @@
       loadStudentData();
     };
 
+    function toggleModal(show) {
+      const modal = document.getElementById("setup-modal");
+      modal.classList.toggle("hidden", !show);
+      modal.classList.toggle("flex", show);
+    }
+
     function triggerExtensionSync() {
       window.postMessage({ type: "START_AMS_SYNC" }, "*");
     }
@@ -174,12 +203,16 @@
       if (!roll) return;
       localStorage.setItem("proxypulse_enrollment", roll);
 
-      const headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` };
+      const headers = { apikey: SUPABASE_KEY };
+      if (!SUPABASE_KEY.startsWith("sb_publishable_")) {
+        headers.Authorization = `Bearer ${SUPABASE_KEY}`;
+      }
+
       const stRes = await fetch(`${SUPABASE_URL}/rest/v1/students?enrollment_no=eq.${roll}&select=*`, { headers });
       const students = await stRes.json();
 
       if (!students || students.length === 0) {
-        alert("Student data not found! Please open ams.mitsgwalior.in once with the ProxyPulse extension active.");
+        toggleModal(true);
         return;
       }
 
@@ -216,7 +249,6 @@
       if (!currentStudent) return;
       const target = Number(document.getElementById("target-pct").value) || 75;
 
-      // Overall stats
       const ovPct = currentStudent.overall_percentage.toFixed(1);
       const ovEl = document.getElementById("st-overall");
       ovEl.innerText = `${ovPct}%`;
@@ -227,7 +259,6 @@
       document.getElementById("st-bunks").innerText = ovMath.status === "safe" ? `+${ovMath.count}` : `-${ovMath.count}`;
       document.getElementById("st-bunk-note").innerText = ovMath.text;
 
-      // Subject cards
       const grid = document.getElementById("view-subjects");
       grid.innerHTML = currentCourses.map(c => {
         const pct = Number(c.attendance_percentage).toFixed(1);
