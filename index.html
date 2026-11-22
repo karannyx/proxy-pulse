@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ProxyPulse — MITS Smart Attendance & Bunk Planner</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #09090b; color: #fafafa; font-family: 'Inter', system-ui, sans-serif; }
+    .glass { background: rgba(24, 24, 27, 0.8); border: 1px solid rgba(63, 63, 70, 0.5); backdrop-filter: blur(12px); }
+    @media print {
+      body * { visibility: hidden; }
+      #printable-letter, #printable-letter * { visibility: visible; }
+      #printable-letter { position: absolute; left: 0; top: 0; width: 100%; color: #000 !important; background: #fff !important; padding: 40px; }
+    }
+  </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+  <!-- Navbar -->
+  <header class="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-zinc-800">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold text-xl">P</div>
+      <div>
+        <h1 class="text-xl font-bold tracking-tight">ProxyPulse <span class="text-xs font-normal px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">MITS Gwalior</span></h1>
+        <p class="text-xs text-zinc-400" id="sync-status">Ready to sync</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <input id="enrollment-input" type="text" placeholder="Enter Roll No (e.g. BTCS26O1062)" 
+        class="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 uppercase" />
+      <button onclick="loadStudentData()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+        Load Data
+      </button>
+      <button onclick="triggerExtensionSync()" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-medium px-3 py-2 rounded-lg border border-zinc-700 transition">
+        Sync AMS ↻
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Dashboard -->
+  <main id="dashboard" class="max-w-6xl mx-auto mt-6 hidden space-y-6">
+
+    <!-- Top Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div class="glass rounded-2xl p-5">
+        <p class="text-xs text-zinc-400 uppercase tracking-wider">Student</p>
+        <h2 id="st-name" class="text-lg font-bold mt-1 truncate">—</h2>
+        <p id="st-roll" class="text-xs text-zinc-400 mt-0.5">—</p>
+      </div>
+      <div class="glass rounded-2xl p-5">
+        <p class="text-xs text-zinc-400 uppercase tracking-wider">Overall Attendance</p>
+        <h2 id="st-overall" class="text-3xl font-extrabold mt-1 text-emerald-400">0%</h2>
+        <p id="st-classes" class="text-xs text-zinc-400 mt-0.5">0 / 0 Classes</p>
+      </div>
+      <div class="glass rounded-2xl p-5">
+        <p class="text-xs text-zinc-400 uppercase tracking-wider">Safe Overall Bunks (75%)</p>
+        <h2 id="st-bunks" class="text-3xl font-extrabold mt-1 text-sky-400">0</h2>
+        <p id="st-bunk-note" class="text-xs text-zinc-400 mt-0.5">Classes you can skip safely</p>
+      </div>
+      <div class="glass rounded-2xl p-5">
+        <p class="text-xs text-zinc-400 uppercase tracking-wider">Target Criteria</p>
+        <div class="flex items-center gap-2 mt-2">
+          <input id="target-pct" type="number" value="75" min="50" max="95" onchange="renderCourses()"
+            class="w-20 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-lg font-bold text-center" />
+          <span class="text-zinc-400 text-sm">% Required</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex gap-2 border-b border-zinc-800 pb-2">
+      <button onclick="switchTab('subjects')" id="tab-subjects" class="px-4 py-2 rounded-lg text-sm font-medium bg-zinc-800 text-white">Subject Bunk Calculator</button>
+      <button onclick="switchTab('planner')" id="tab-planner" class="px-4 py-2 rounded-lg text-sm font-medium text-zinc-400 hover:text-white">AI Leave Simulator</button>
+      <button onclick="switchTab('leave')" id="tab-leave" class="px-4 py-2 rounded-lg text-sm font-medium text-zinc-400 hover:text-white">Leave Application PDF</button>
+    </div>
+
+    <!-- Tab 1: Subject-Wise Bunk Calculator -->
+    <section id="view-subjects" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></section>
+
+    <!-- Tab 2: AI Leave Simulator -->
+    <section id="view-planner" class="hidden glass rounded-2xl p-6 space-y-4">
+      <h3 class="text-lg font-bold">Smart Leave Impact Simulator</h3>
+      <p class="text-sm text-zinc-400">Simulate taking consecutive days off (assuming ~5 classes per day) to see if you stay above your target.</p>
+      <div class="flex flex-wrap items-center gap-4">
+        <div>
+          <label class="block text-xs text-zinc-400 mb-1">Days to Bunk</label>
+          <input id="sim-days" type="number" value="2" min="1" max="15" oninput="runSimulator()"
+            class="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 w-28 text-white" />
+        </div>
+        <div>
+          <label class="block text-xs text-zinc-400 mb-1">Avg Classes / Day</label>
+          <input id="sim-cpd" type="number" value="5" min="1" max="8" oninput="runSimulator()"
+            class="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 w-28 text-white" />
+        </div>
+      </div>
+      <div id="sim-result" class="p-4 rounded-xl bg-zinc-900/90 border border-zinc-800 text-sm space-y-2"></div>
+    </section>
+
+    <!-- Tab 3: Leave PDF Generator -->
+    <section id="view-leave" class="hidden grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="glass rounded-2xl p-6 space-y-4">
+        <h3 class="text-lg font-bold">Generate MITS Leave Application</h3>
+        <div>
+          <label class="block text-xs text-zinc-400 mb-1">Leave Type</label>
+          <select id="leave-type" onchange="updateLetter()" class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm">
+            <option value="Medical Leave">Medical Leave (Fever / Health Issue)</option>
+            <option value="Family Function">Urgent Family Work / Function</option>
+            <option value="Hackathon / Event">Technical Event / Hackathon Participation</option>
+          </select>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-zinc-400 mb-1">From Date</label>
+            <input id="leave-from" type="date" onchange="updateLetter()" class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-zinc-400 mb-1">To Date</label>
+            <input id="leave-to" type="date" onchange="updateLetter()" class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs text-zinc-400 mb-1">Department / Branch</label>
+          <input id="leave-branch" type="text" value="Computer Science & Engineering (B.Tech 1st Year)" oninput="updateLetter()"
+            class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm" />
+        </div>
+        <button onclick="window.print()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg transition">
+          Download / Print Official PDF
+        </button>
+      </div>
+
+      <!-- Printable Preview -->
+      <div id="printable-letter" class="bg-white text-zinc-900 rounded-2xl p-8 text-sm leading-relaxed shadow-xl">
+        <p class="font-bold text-base">To,</p>
+        <p>The Head of Department / Class Coordinator,</p>
+        <p id="ltr-branch">Department of Computer Science & Engineering,</p>
+        <p>Madhav Institute of Technology & Science (MITS), Gwalior (M.P.)</p>
+        <p class="mt-4"><strong>Date:</strong> <span id="ltr-today"></span></p>
+        <p class="mt-3"><strong>Subject:</strong> Application for <span id="ltr-subject">Medical Leave</span>.</p>
+        <p class="mt-4">Respected Sir/Madam,</p>
+        <p class="mt-2" id="ltr-body">
+          With due respect, I beg to state that I am a regular student of B.Tech 1st Year in your department. I will not be able to attend classes due to health issues. Kindly grant me leave for the mentioned duration.
+        </p>
+        <p class="mt-4">Thanking you.</p>
+        <p class="mt-4">Yours obediently,</p>
+        <p class="font-bold mt-1" id="ltr-name">KARAN SAHU</p>
+        <p>Enrollment No: <span id="ltr-roll">BTCS26O1062</span></p>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    const SUPABASE_URL = "https://isybjtdokjltlkyuinru.supabase.co";
+    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzeWJqdGRva2psdGxreXVpbnJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUyOTQyMzIsImV4cCI6MjExMDg3MDIzMn0.f7yukspxleLmYvMebutdiMzt2yLTKLug2_7zbBAvhQw";
+
+    let currentStudent = null;
+    let currentCourses = [];
+
+    window.onload = () => {
+      document.getElementById("ltr-today").innerText = new Date().toLocaleDateString("en-IN");
+      const savedRoll = localStorage.getItem("proxypulse_enrollment") || "BTCS26O1062";
+      document.getElementById("enrollment-input").value = savedRoll;
+      loadStudentData();
+    };
+
+    function triggerExtensionSync() {
+      window.postMessage({ type: "START_AMS_SYNC" }, "*");
+    }
+
+    async function loadStudentData() {
+      const roll = document.getElementById("enrollment-input").value.trim().toUpperCase();
+      if (!roll) return;
+      localStorage.setItem("proxypulse_enrollment", roll);
+
+      const headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` };
+      const stRes = await fetch(`${SUPABASE_URL}/rest/v1/students?enrollment_no=eq.${roll}&select=*`, { headers });
+      const students = await stRes.json();
+
+      if (!students || students.length === 0) {
+        alert("Student data not found! Please open ams.mitsgwalior.in once with the ProxyPulse extension active.");
+        return;
+      }
+
+      currentStudent = students[0];
+      const cRes = await fetch(`${SUPABASE_URL}/rest/v1/courses?student_id=eq.${currentStudent.id}&select=*`, { headers });
+      currentCourses = await cRes.json();
+
+      document.getElementById("dashboard").classList.remove("hidden");
+      document.getElementById("st-name").innerText = currentStudent.full_name;
+      document.getElementById("st-roll").innerText = `${currentStudent.enrollment_no} • ${currentStudent.email}`;
+      document.getElementById("sync-status").innerText = `Last synced: ${new Date(currentStudent.last_synced_at).toLocaleString()}`;
+      document.getElementById("ltr-name").innerText = currentStudent.full_name;
+      document.getElementById("ltr-roll").innerText = currentStudent.enrollment_no;
+
+      renderCourses();
+      runSimulator();
+      updateLetter();
+    }
+
+    function calcBunkMath(present, total, targetPct) {
+      const t = targetPct / 100;
+      if (total === 0) return { status: "safe", count: 0, text: "No classes held yet" };
+      const current = present / total;
+      if (current >= t) {
+        const canBunk = Math.floor((present - t * total) / t);
+        return { status: "safe", count: canBunk, text: canBunk > 0 ? `Can safely bunk ${canBunk} class(es)` : "On the edge! Don't bunk next class" };
+      } else {
+        const needAttend = Math.ceil((t * total - present) / (1 - t));
+        return { status: "danger", count: needAttend, text: `Attend next ${needAttend} class(es) continuously` };
+      }
+    }
+
+    function renderCourses() {
+      if (!currentStudent) return;
+      const target = Number(document.getElementById("target-pct").value) || 75;
+
+      // Overall stats
+      const ovPct = currentStudent.overall_percentage.toFixed(1);
+      const ovEl = document.getElementById("st-overall");
+      ovEl.innerText = `${ovPct}%`;
+      ovEl.className = `text-3xl font-extrabold mt-1 ${ovPct >= target ? "text-emerald-400" : "text-rose-400"}`;
+      document.getElementById("st-classes").innerText = `${currentStudent.present_classes} / ${currentStudent.total_classes} Classes Attended`;
+
+      const ovMath = calcBunkMath(currentStudent.present_classes, currentStudent.total_classes, target);
+      document.getElementById("st-bunks").innerText = ovMath.status === "safe" ? `+${ovMath.count}` : `-${ovMath.count}`;
+      document.getElementById("st-bunk-note").innerText = ovMath.text;
+
+      // Subject cards
+      const grid = document.getElementById("view-subjects");
+      grid.innerHTML = currentCourses.map(c => {
+        const pct = Number(c.attendance_percentage).toFixed(1);
+        const math = calcBunkMath(c.present_classes, c.total_classes, target);
+        const isSafe = math.status === "safe";
+
+        return `
+          <div class="glass rounded-2xl p-5 flex flex-col justify-between space-y-4">
+            <div>
+              <div class="flex items-start justify-between gap-2">
+                <span class="text-xs font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">${c.course_code}</span>
+                <span class="text-xs px-2 py-0.5 rounded-full ${isSafe ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"}">${c.course_type || "Theory"}</span>
+              </div>
+              <h4 class="font-bold text-base mt-2 leading-snug">${c.course_name}</h4>
+              <p class="text-xs text-zinc-400 mt-1">${c.faculty_name || "Faculty"}</p>
+            </div>
+            <div>
+              <div class="flex justify-between text-sm mb-1.5">
+                <span class="text-zinc-400">${c.present_classes}/${c.total_classes} Attended</span>
+                <span class="font-bold ${isSafe ? "text-emerald-400" : "text-rose-400"}">${pct}%</span>
+              </div>
+              <div class="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+                <div class="h-full ${isSafe ? "bg-emerald-500" : "bg-rose-500"}" style="width: ${Math.min(pct, 100)}%"></div>
+              </div>
+              <p class="text-xs mt-3 font-medium ${isSafe ? "text-emerald-300" : "text-rose-300"}">
+                ${isSafe ? "✅" : "⚠️"} ${math.text}
+              </p>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function runSimulator() {
+      if (!currentStudent) return;
+      const days = Number(document.getElementById("sim-days").value) || 0;
+      const cpd = Number(document.getElementById("sim-cpd").value) || 5;
+      const target = Number(document.getElementById("target-pct").value) || 75;
+
+      const missed = days * cpd;
+      const newTotal = currentStudent.total_classes + missed;
+      const newPct = ((currentStudent.present_classes / newTotal) * 100).toFixed(2);
+      const safe = newPct >= target;
+
+      document.getElementById("sim-result").innerHTML = `
+        <p>If you bunk <strong>${days} day(s)</strong> (~${missed} classes), your overall attendance will drop from 
+        <strong>${currentStudent.overall_percentage.toFixed(1)}%</strong> to 
+        <strong class="${safe ? "text-emerald-400" : "text-rose-400"} text-base">${newPct}%</strong>.</p>
+        <p class="${safe ? "text-emerald-400" : "text-rose-400"} font-medium">
+          ${safe ? "✅ Safe to take leave! You will still remain above " + target + "%." : "🚨 Risky! You will fall below " + target + "% criteria."}
+        </p>
+      `;
+    }
+
+    function updateLetter() {
+      const type = document.getElementById("leave-type").value;
+      const from = document.getElementById("leave-from").value || "[Start Date]";
+      const to = document.getElementById("leave-to").value || "[End Date]";
+      const branch = document.getElementById("leave-branch").value;
+
+      document.getElementById("ltr-branch").innerText = `Department of ${branch},`;
+      document.getElementById("ltr-subject").innerText = type;
+      document.getElementById("ltr-body").innerText =
+        `With due respect, I beg to state that I am a regular student of ${branch} at MITS Gwalior. ` +
+        `I will not be able to attend my classes from ${from} to ${to} due to ${type.toLowerCase()}. ` +
+        `Kindly grant me leave for the above-mentioned dates and oblige.`;
+    }
+
+    function switchTab(tab) {
+      ["subjects", "planner", "leave"].forEach(t => {
+        document.getElementById(`view-${t}`).classList.toggle("hidden", t !== tab);
+        const btn = document.getElementById(`tab-${t}`);
+        btn.className = t === tab
+          ? "px-4 py-2 rounded-lg text-sm font-medium bg-zinc-800 text-white"
+          : "px-4 py-2 rounded-lg text-sm font-medium text-zinc-400 hover:text-white";
+      });
+    }
+  </script>
+</body>
+</html>
